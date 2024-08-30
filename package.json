@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "A starter for the Node.js project with TypeScript and pnpm",
   "main": "build/index.js",
+  "type": "module",
   "repository": {
     "type": "git",
     "url": "https://github.com/nodm/node-ts-starter.git"
@@ -32,9 +33,16 @@
   "devDependencies": {
     "@types/jest": "^29.5.12",
     "@types/node": "^20.11.30",
-    "gts": "^5.3.0",
+    "gts": "^5.3.1",
     "jest": "^29.7.0",
     "ts-jest": "^29.1.2",
     "typescript": "^5.4.3"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.2.31",
+    "@langchain/ollama": "^0.0.4",
+    "dotenv": "^16.4.5",
+    "langchain": "^0.2.17",
+    "tslib": "^2.7.0"
   }
 }
