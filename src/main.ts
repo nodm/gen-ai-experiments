@@ -1,5 +1,6 @@
 import {multimodalExample} from './multi-modal.js';
 import {streamingExample} from './streaming.js';
+import {chatbot} from './chatbot.js';
 
 export async function main() {
   console.time('LLM call');
@@ -11,6 +12,8 @@ export async function main() {
     './src/assets/example.jpeg',
     {temperature: 0.2}
   );
+
+  await chatbot();
 
   console.timeEnd('LLM call');
 }
