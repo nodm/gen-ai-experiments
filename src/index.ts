@@ -1,3 +1,3 @@
-export default function greet(name = 'world'): void {
-  console.log(`Hello, ${name}!`);
-}
+import {main} from './main.js';
+
+main().catch(console.error);
