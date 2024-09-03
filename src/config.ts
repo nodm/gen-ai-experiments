@@ -4,6 +4,10 @@ const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_MAX_RETRIES = 2;
 
 const config = {
+  get baseUrl(): string {
+    return process.env.BASE_URL ?? 'http://localhost:11434';
+  },
+
   get modelName(): string {
     return process.env.MODEL_NAME ?? 'llama3.1';
   },

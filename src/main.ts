@@ -1,6 +1,7 @@
 import {multimodalExample} from './multi-modal.js';
 import {streamingExample} from './streaming.js';
 import {chatbot} from './chatbot.js';
+import {ragQuickStartGuide} from './rag-quick-start-guide.js';
 
 export async function main() {
   console.time('LLM call');
@@ -14,6 +15,8 @@ export async function main() {
   );
 
   await chatbot();
+
+  await ragQuickStartGuide();
 
   console.timeEnd('LLM call');
 }

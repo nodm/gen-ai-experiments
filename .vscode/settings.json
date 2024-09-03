@@ -1,3 +1,13 @@
 {
-  "cSpell.words": ["langgraph", "langsmith", "ollama", "posttest"]
+  "cSpell.words": [
+    "Kwargs",
+    "langgraph",
+    "langsmith",
+    "llms",
+    "mxbai",
+    "ollama",
+    "posttest",
+    "vectorstore",
+    "vectorstores"
+  ]
 }

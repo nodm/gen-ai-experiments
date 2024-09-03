@@ -1,109 +1,78 @@
 // https://medium.com/@eric_vaillancourt/mastering-langchain-rag-a-comprehensive-tutorial-series-part-1-28faf6257fea
 // https://js.langchain.com/v0.2/docs/how_to/qa_chat_history
 
-import {createStuffDocumentsChain} from 'langchain/chains/combine_documents';
-import {pull} from 'langchain/hub';
 import {RecursiveCharacterTextSplitter} from 'langchain/text_splitter';
 import {MemoryVectorStore} from 'langchain/vectorstores/memory';
 import {formatDocumentsAsString} from 'langchain/util/document';
 import {CheerioWebBaseLoader} from '@langchain/community/document_loaders/web/cheerio';
-import {AIMessage, HumanMessage, SystemMessage} from '@langchain/core/messages';
+import {Document} from '@langchain/core/documents';
+import {AIMessage, HumanMessage} from '@langchain/core/messages';
 import {StringOutputParser} from '@langchain/core/output_parsers';
 import {ChatPromptTemplate, MessagesPlaceholder} from '@langchain/core/prompts';
 import {Runnable, RunnableConfig, RunnablePassthrough, RunnableSequence} from '@langchain/core/runnables';
 import {Ollama, OllamaEmbeddings} from '@langchain/ollama';
+import {OpenAIEmbeddings, ChatOpenAI, OpenAI} from '@langchain/openai';
 import config from './config.js';
 
-export async function ragQuickStartGuide() {
-  const llm = new Ollama({
-    model: config.modelName,
-    temperature: config.temperature,
-    maxRetries: config.maxRetries,
-  });
+type ChainParameters = {
+  chat_history?: (HumanMessage | AIMessage)[];
+  context?: string;
+  question: string;
+};
 
-  // https://js.langchain.com/v0.2/docs/integrations/text_embedding/ollama/
-  // https://ollama.com/blog/embedding-models
-  const embeddings = new OllamaEmbeddings({
-    model: 'mxbai-embed-large',
-  });
+const chat_history: (HumanMessage | AIMessage)[] = [];
 
-  const loader = new CheerioWebBaseLoader('https://lilianweng.github.io/posts/2023-06-23-agent/');
-  const docs = await loader.load();
+export async function ragQuickStartGuide({llm, embeddings} = getLLM('ollama')) {
+  const splittedDocuments = await loadDocuments('https://lilianweng.github.io/posts/2023-06-23-agent/');
 
-  const textSplitter = new RecursiveCharacterTextSplitter({
-    chunkSize: 1000,
-    chunkOverlap: 200,
-  });
-  const splits = await textSplitter.splitDocuments(docs);
+  const retriever = await getVectorStoreRetriever(splittedDocuments, embeddings);
 
-  // https://js.langchain.com/v0.2/docs/integrations/vectorstores/memory/
-  const vectorStore = await MemoryVectorStore.fromDocuments(splits, embeddings);
-
-  const retriever = vectorStore.asRetriever({
-    searchType: 'mmr',
-    searchKwargs: {
-      fetchK: 10,
-    },
-    // filter,
-    k: 2,
-  });
-
-  const prompt = await pull<ChatPromptTemplate>('rlm/rag-prompt');
-
-  // const ragChain = await createStuffDocumentsChain({
-  //   llm,
-  //   prompt,
-  //   outputParser: new StringOutputParser(),
-  // });
-
-  // await ragChain.invoke({
-  //   context: await retriever.invoke('What is Task Decomposition?'),
-  //   question: 'What is Task Decomposition?',
-  // });
-
-  const contextualizeQSystemPrompt = `Given a chat history and the latest user question
-which might reference context in the chat history, formulate a standalone question
-which can be understood without the chat history. Do NOT answer the question,
-just reformulate it if needed and otherwise return it as is.`;
   const contextualizeQPrompt = ChatPromptTemplate.fromMessages([
-    ['system', contextualizeQSystemPrompt],
+    [
+      'system',
+      `
+        Given a chat history and the latest user question which might reference context in the chat history,
+        formulate a standalone question which can be understood without the chat history.
+        Do not answer the question, just reformulate it if needed and otherwise return it as is.
+        Provide just a question, no explanation and other information.
+      `,
+    ],
     new MessagesPlaceholder('chat_history'),
     ['human', '{question}'],
   ]);
-  const contextualizeQChain = contextualizeQPrompt.pipe(llm).pipe(new StringOutputParser());
-  // const q = await contextualizeQChain.invoke({
-  //   chat_history: [new HumanMessage('What does LLM stand for?'), new AIMessage('Large language model')],
-  //   question: 'What is meant by large',
-  // });
-  // console.log(q);
-
-  const qaSystemPrompt = `You are an assistant for question-answering tasks.
-Use the following pieces of retrieved context to answer the question.
-If you don't know the answer, just say that you don't know.
-Use three sentences maximum and keep the answer concise.
-
-{context}`;
-  const qaPrompt = ChatPromptTemplate.fromMessages([
-    new SystemMessage({content: qaSystemPrompt}),
-    new MessagesPlaceholder('chat_history'),
-    new HumanMessage({content: '{question}'}),
-  ]);
-
-  const contextualizedQuestion = (input: Record<string, unknown>) => {
+  const contextualizeQChain = contextualizeQPrompt.pipe(llm as Ollama).pipe(new StringOutputParser());
+  const contextualizedQuestion = (input: ChainParameters) => {
     if ('chat_history' in input) {
       return contextualizeQChain;
     }
-    return input.question as Runnable<string, string, RunnableConfig>;
+
+    return input.question as unknown as Runnable<string, string, RunnableConfig>;
   };
+
+  const qaPrompt = ChatPromptTemplate.fromMessages([
+    [
+      'system',
+      `
+        You are an assistant for question-answering tasks.
+        Use the following pieces of retrieved context to answer the question.
+        If you don't know the answer, just say that you don't know.
+        Use three sentences maximum and keep the answer concise.
+
+        {context}
+      `,
+    ],
+    new MessagesPlaceholder('chat_history'),
+    ['human', '{question}'],
+  ]);
 
   const ragChain = RunnableSequence.from([
     RunnablePassthrough.assign({
-      context: async (input: Record<string, unknown>) => {
-        if ('chat_history' in input) {
-          const chain = contextualizedQuestion(input);
-          return chain.pipe(retriever).pipe(formatDocumentsAsString);
-        }
-        return '';
+      context: async (input: ChainParameters) => {
+        if (!('chat_history' in input)) return '';
+
+        const chain = contextualizedQuestion(input);
+
+        return chain.pipe(retriever).pipe(formatDocumentsAsString);
       },
     }),
     qaPrompt,
@@ -111,25 +80,88 @@ Use three sentences maximum and keep the answer concise.
     new StringOutputParser(),
   ]);
 
-  const chat_history: string[] = [];
+  await askQuestion(ragChain, 'What is task decomposition?');
+  await askQuestion(ragChain, 'What are common ways of doing it?');
+  await askQuestion(ragChain, 'What are the complemented components of a LLM-powered autonomous agent system?');
+  await askQuestion(ragChain, 'What is the role of the agent in the agent-environment interaction?');
+  await askQuestion(ragChain, 'What is the Self-reflection?');
+}
 
-  const question = 'What is task decomposition?';
-  const aiMsg = await ragChain.invoke({question, chat_history});
+function getLLM(provider: 'ollama' | 'OpenAI') {
+  switch (provider) {
+    case 'ollama':
+      return {
+        llm: new Ollama({
+          baseUrl: config.baseUrl,
+          model: config.modelName,
+          temperature: config.temperature,
+          maxRetries: config.maxRetries,
+        }),
+        // https://js.langchain.com/v0.2/docs/integrations/text_embedding/ollama/
+        // https://ollama.com/blog/embedding-models
+        embeddings: new OllamaEmbeddings({
+          model: 'mxbai-embed-large',
+        }),
+      };
+    case 'OpenAI':
+      return {
+        llm: new ChatOpenAI({
+          model: 'gpt-3.5-turbo',
+          temperature: 0.2,
+        }),
+        embeddings: new OpenAIEmbeddings(),
+      };
+    default:
+      throw new Error(`Unknown provider: ${provider}`);
+  }
+}
 
-  console.log(aiMsg);
+async function loadDocuments(url: string) {
+  const loader = new CheerioWebBaseLoader(url);
+  const docs = await loader.load();
 
-  chat_history.push(aiMsg);
+  const textSplitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 1_000,
+    chunkOverlap: 200,
+  });
+  const splittedDocuments = await textSplitter.splitDocuments(docs);
 
-  const secondQuestion = 'What are common ways of doing it?';
-  // await ragChain.invoke({question: secondQuestion, chat_history});
+  return splittedDocuments;
+}
 
-  const stream = await ragChain.stream({
-    question: secondQuestion,
-    chat_history,
+async function getVectorStoreRetriever(
+  splittedDocuments: Document<Record<string, unknown>>[],
+  embeddings: OllamaEmbeddings | OpenAIEmbeddings
+) {
+  // https://js.langchain.com/v0.2/docs/integrations/vectorstores/memory/
+  const vectorStore = await MemoryVectorStore.fromDocuments(splittedDocuments, embeddings);
+
+  const retriever = vectorStore.asRetriever({
+    searchType: 'mmr',
+    searchKwargs: {
+      fetchK: 10,
+    },
+    // filter,
+    k: 4,
   });
 
+  return retriever;
+}
+
+async function askQuestion(runnableSequence: RunnableSequence<ChainParameters, string>, question: string) {
+  const stream = await runnableSequence.stream({
+    chat_history,
+    question,
+  });
+
+  console.log(`\x1b[32m${question}\x1b[90m`);
+
+  let answer = '';
   for await (const chunk of stream) {
     process.stdout.write(chunk);
+    answer = answer.concat(chunk);
   }
-  process.stdout.write('\n');
+  process.stdout.write('\n\n\x1b[0m');
+
+  chat_history.push(new HumanMessage({content: question}), new AIMessage({content: answer}));
 }
